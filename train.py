@@ -31,13 +31,9 @@ if device == 'cuda': model = torch.compile(model)
 
 opt = model.configure_optmizers(lr = 6e-04, wd = 1e-01, betas = (0.9, 0.95), eps = 1e-08, device_type = device)
 lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr = 6e-04, total_steps = iterations, final_div_factor=10.0)
-dl = DataLoaderLite(B = B, T = T)
+dl = DataLoader(B = B, T = T)
 
 losses = []
-
-opt = model.configure_optmizers(lr = 6e-04, wd = 1e-01, betas = (0.9, 0.95), eps = 1e-08, device_type = device)
-lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr = 6e-04, total_steps = iterations, final_div_factor=10.0)
-dl = DataLoaderLite(B = B, T = T)
 
 for i in range(iterations): 
     opt.zero_grad()
