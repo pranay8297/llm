@@ -5,6 +5,8 @@ Downloads and tokenizes the data and saves data shards to disk.
 Run simply as:
 $ python fineweb.py
 Will save shards to the local directory "edu_fineweb10B".
+
+This file is copied from karpathy's gpt2 repo - https://github.com/karpathy/build-nanogpt/blob/master/fineweb.py
 """
 
 import os
