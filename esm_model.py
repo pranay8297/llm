@@ -91,7 +91,7 @@ class ESMOutLayer(nn.Module):
         x = x + attn_scores
         return x
 
-class ESMSelfAttn(nn.Module):
+class ESMSelfAttn(nn.Module): # Verified
     
     def __init__(self, config):
         super().__init__()
@@ -124,7 +124,7 @@ class ESMSelfAttn(nn.Module):
         y = rearrange(y, 'b h s e -> b s (h e)', h = self.n_head)
         return y
 
-class ESMAttn(nn.Module): 
+class ESMAttn(nn.Module): # Verified
 
     def __init__(self, config):
         super().__init__() # No activation function at this level
@@ -133,24 +133,24 @@ class ESMAttn(nn.Module):
         self.LayerNorm = nn.LayerNorm(config.n_embd)
     
     def forward(self, x, attention_mask):
-        x = self.LayerNorm(x)
-        attn = self.self(x, attention_mask)
+        inter_x = self.LayerNorm(x)
+        attn = self.self(inter_x, attention_mask)
         out = self.output(attn, x)
         return out
 
-class ESMLayers(nn.Module): 
+class ESMLayers(nn.Module): # Both Init and Forward Verified - Done and Dusted
 
     def __init__(self, config):
         super().__init__()
-        self.attention = ESMAttn(config) # TODO: implement this forward
-        self.intermediate = ESMIntermediateLayer(config.n_embd, config.hidden_size) # Has an activation - done, forward done
-        self.output = ESMOutLayer(config.hidden_size, config.n_embd) # No activation - done, forward done
+        self.attention = ESMAttn(config) 
+        self.intermediate = ESMIntermediateLayer(config.n_embd, config.hidden_size) # 
+        self.output = ESMOutLayer(config.hidden_size, config.n_embd) #
         self.LayerNorm = nn.LayerNorm(config.n_embd)
     
-    def forward(self, x, attention_mask): 
+    def forward(self, x, attention_mask):
         attention_op = self.attention(x, attention_mask)
-        attention_op = self.LayerNorm(attention_op)
-        inter = self.intermediate(attention_op)
+        attention_op_ln = self.LayerNorm(attention_op)
+        inter = self.intermediate(attention_op_ln)
         out = self.output(inter, attention_op)
         return out
 
@@ -309,7 +309,8 @@ print(model)
 # Next: TODO - Load the pretrained weights to this model - Done
 # Add required Activation functions and all... make sure its the same forward as of origina esm model's
 # Implement Rotary Embeddings - Done
-# Do a forward pass - Partially done - verification process in pending
+# Do a forward pass - Partially done - verification process - Done
+
 # Then work on Embeddings - Add new tokens - Keep the existing tokens - Turn on requires grad
 # Get the training data
 # Set up Lora for the model
