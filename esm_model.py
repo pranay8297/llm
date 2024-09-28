@@ -6,6 +6,9 @@ from torch.nn import functional as F
 from dataclasses import dataclass
 from einops import rearrange, repeat
 
+from rotary_utils import *
+from esm_embeddings import ESMEmbeddings
+
 @dataclass
 class ESMConfig(): 
     block_size: int = 1024
@@ -15,6 +18,7 @@ class ESMConfig():
     n_embd: int = 768
     hidden_size: int = 4096 # 4 * block_size
     dropout: float = 0.0
+    pre_trained_model_name: str = ''
 
 class ESMIntermediateLayer(nn.Module):
     def __init__(self, nin, nout, dropout = 0.0):
@@ -66,7 +70,7 @@ class ESMSelfAttn(nn.Module): # Verified
         q, k = self.rotary_embeddings(q, k)
 
         # Attention claculation - # TODO: make is_casual true in case of finetuning - Very important
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask = attention_mask, is_causal=False) # flash attention 
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask = attention_mask, is_causal = True) # flash attention 
         y = rearrange(y, 'b h s e -> b s (h e)', h = self.n_head)
         return y
 
@@ -124,10 +128,7 @@ class ESM(nn.Module):
         super().__init__()
         self.config = config
         self.esm = nn.ModuleDict(dict(
-            embeddings = nn.ModuleDict(dict( # No activation needed - for both the embeddings - done - forward done
-                word_embeddings = nn.Embedding(config.vocab_size, config.n_embd),
-                position_embeddings = nn.Embedding(config.block_size, config.n_embd)
-            )),
+            embeddings = ESMEmbeddings(config),
             encoder = ESMEncoder(config), # Done, forward - here
             final_layer = nn.Linear(config.n_embd, config.vocab_size)
         ))
@@ -156,12 +157,13 @@ class ESM(nn.Module):
 
         config_args['vocab_size'] = 33 # always 33 for ESM Models
         config_args['block_size'] = 1026 # Always constant for ESM Models
+        config_args['pre_trained_model_name'] = f"facebook/{model_type}"
+
         config = ESMConfig(**config_args)
         return config
 
-    
     @classmethod
-    def load_pretrained(cls, model_type = 'esm2_t33_650M_UR50D'):
+    def load_pretrained(cls, model_type = 'esm2_t33_650M_UR50D', embedding_post_init = True):
 
         config = cls.get_pretrained_config(model_type)
         print("loading weights from pretrained gpt: %s" % model_type)
@@ -174,10 +176,8 @@ class ESM(nn.Module):
 
         # init a huggingface/transformers model
         from transformers import AutoModelForSequenceClassification
-
-        model_checkpoint = f"facebook/{model_type}"
         num_labels = 33
-        model_hf = AutoModelForSequenceClassification.from_pretrained(model_checkpoint, num_labels=num_labels)
+        model_hf = AutoModelForSequenceClassification.from_pretrained(config.pre_trained_model_name, num_labels = num_labels)
         sd_hf = model_hf.state_dict()
 
         # copy while ensuring all of the parameters are aligned and match in names and shapes
@@ -206,18 +206,10 @@ class ESM(nn.Module):
         # Freeze the model
         for param in model.parameters():
             param.requires_grad = False
+        
+        if embedding_post_init: model.esm.embeddings.post_model_init()
 
         return model
-
-    def get_embs(self, x, attention_mask = None):
-        token_embs = self.esm.embeddings.word_embeddings(x)
-        # Not required as we are use rotary embeddings - Hence we do not require absolute position embeddings
-        # position_embs = self.esm.embeddings.position_embeddings(torch.arange(0, x.shape[1], 1, dtype = torch.long)) 
-
-        if attention_mask is not None: 
-            token_embs = (token_embs * attention_mask.unsqueeze(-1)).to(token_embs.dtype)
-
-        return token_embs 
 
     def get_extended_attn_mask(self, attention_mask, input_shape):
         
@@ -236,7 +228,7 @@ class ESM(nn.Module):
     def forward(self, x, y = None, attention_mask = None, output_encoder = True):
 
         # Calculate Embeddings
-        x = self.get_embs(x, attention_mask) # Verified
+        x = self.esm.embeddings(x, attention_mask) # TODO: Verify the new embeddings function without doing post init and after doing post model init - Ideally both should stay the same
 
         # compute attention_mask for attention scores
         attention_mask = self.get_extended_attn_mask(attention_mask, x.shape)
