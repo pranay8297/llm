@@ -6,8 +6,9 @@ from torch.nn import functional as F
 from dataclasses import dataclass
 from einops import rearrange, repeat
 
-from rotary_utils import *
 from esm_embeddings import ESMEmbeddings
+from rotary_utils import *
+from utils import *
 
 @dataclass
 class ESMConfig(): 
@@ -163,7 +164,7 @@ class ESM(nn.Module):
         return config
 
     @classmethod
-    def load_pretrained(cls, model_type = 'esm2_t33_650M_UR50D', embedding_post_init = True):
+    def from_pretrained(cls, model_type = 'esm2_t33_650M_UR50D', embedding_post_init = True):
 
         config = cls.get_pretrained_config(model_type)
         print("loading weights from pretrained gpt: %s" % model_type)
@@ -194,7 +195,9 @@ class ESM(nn.Module):
 
             # vanilla copy over the other parameters
             try: assert sd_hf[k].shape == sd[k].shape
-            except Exception as e: print(f"Mismatch in the shape of tensor while loading weights - Key: {k}, expected shape: {sd_hf[k].shape}, actual shape: {sd[k].shape}")
+            except Exception as e: 
+              print(k)
+              print(f"Mismatch in the shape of tensor while loading weights - Key: {k}, expected shape: {sd_hf[k].shape}, actual shape: {sd[k].shape if k in sd else k}")
             
             with torch.no_grad():
                 sd[k].copy_(sd_hf[k])
@@ -206,8 +209,13 @@ class ESM(nn.Module):
         # Freeze the model
         for param in model.parameters():
             param.requires_grad = False
-        
-        if embedding_post_init: model.esm.embeddings.post_model_init()
+
+        if embedding_post_init: 
+            breakpoint()
+            model.esm.embeddings.post_model_init()
+            del model.esm.final_layer
+            model.esm.final_layer = nn.Linear(config.n_embd, model.esm.embeddings.word_embeddings.weight.shape[0])
+            model.esm.final_layer.weight = model.esm.embeddings.word_embeddings.weight
 
         return model
 
@@ -240,6 +248,7 @@ class ESM(nn.Module):
         else:
             return self.esm.final_layer(x), x
 
+tokenizer = get_tokenizer()
 model = ESM.load_pretrained("esm2_t30_150M_UR50D") # load the pretrained frozen model
 print('Models created')
 print(model)
@@ -249,7 +258,7 @@ print(model)
 # Implement Rotary Embeddings - Done
 # Do a forward pass - Partially done - verification process - Done
 
-# Then work on Embeddings - Add new tokens - Keep the existing tokens - Turn on requires grad
+# Then work on Embeddings - Add new tokens - Keep the existing tokens - Turn on requires grad - Done, Verification: Pending
 # Get the training data
 # Set up Lora for the model
 # Finetune - Hope for the best - Snowflake

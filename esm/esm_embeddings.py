@@ -9,8 +9,8 @@ class ESMEmbeddings(nn.Module):
     def __init__(self, config):
         super.__init__()
         self.config = config
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.n_embd),
-        self.position_embeddigs = nn.Embedding(config.block_size, config.n_embd)
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.n_embd)
+        self.position_embeddings = nn.Embedding(config.block_size, config.n_embd)
     
     def post_model_init(self):
         # Merge both the tokenizer vocabs - Battle of Tokenizers
@@ -49,9 +49,9 @@ class ESMEmbeddings(nn.Module):
         # not possible, so instead we store the indecis and zero out the grads before optim.step()
         # hence we do not update these embeddings
         self.indices = indices
-        del self.word_embeddings
+
         with torch.no_grad():
-            self.word_embeddings = new_word_embeddings
+            self.word_embeddings.weight = new_word_embeddings.weight
         self.word_embeddings.requires_grad_(True)
 
     def forward(self, x, attention_mask = None):
