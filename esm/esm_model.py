@@ -8,7 +8,7 @@ from einops import rearrange, repeat
 
 from esm_embeddings import ESMEmbeddings
 from rotary_utils import *
-from utils import *
+from utils import get_tokenizer
 
 @dataclass
 class ESMConfig(): 
@@ -211,7 +211,6 @@ class ESM(nn.Module):
             param.requires_grad = False
 
         if embedding_post_init: 
-            breakpoint()
             model.esm.embeddings.post_model_init()
             del model.esm.final_layer
             model.esm.final_layer = nn.Linear(config.n_embd, model.esm.embeddings.word_embeddings.weight.shape[0])
@@ -249,15 +248,15 @@ class ESM(nn.Module):
             return self.esm.final_layer(x), x
 
 tokenizer = get_tokenizer()
-model = ESM.load_pretrained("esm2_t30_150M_UR50D") # load the pretrained frozen model
+model = ESM.from_pretrained("esm2_t30_150M_UR50D") # load the pretrained frozen model
 print('Models created')
 print(model)
+
 
 # Next: TODO - Load the pretrained weights to this model - Done
 # Add required Activation functions and all... make sure its the same forward as of origina esm model's
 # Implement Rotary Embeddings - Done
 # Do a forward pass - Partially done - verification process - Done
-
 # Then work on Embeddings - Add new tokens - Keep the existing tokens - Turn on requires grad - Done, Verification: Pending
 # Get the training data
 # Set up Lora for the model

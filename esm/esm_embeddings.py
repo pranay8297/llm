@@ -7,7 +7,7 @@ PFGPT_HF_MODEL_PATH = 'lamm-mit/ProteinForceGPT'
 class ESMEmbeddings(nn.Module):
 
     def __init__(self, config):
-        super.__init__()
+        super().__init__()
         self.config = config
         self.word_embeddings = nn.Embedding(config.vocab_size, config.n_embd)
         self.position_embeddings = nn.Embedding(config.block_size, config.n_embd)
@@ -15,7 +15,6 @@ class ESMEmbeddings(nn.Module):
     def post_model_init(self):
         # Merge both the tokenizer vocabs - Battle of Tokenizers
         # That is create a new word embedding of pf_gpts vocab size and configs n_embd
-
         # Get pf GPT Tokenizer
         pfgpt_tokenizer = AutoTokenizer.from_pretrained(PFGPT_HF_MODEL_PATH, trust_remote_code=True)
         pfgpt_tokenizer.pad_token = pfgpt_tokenizer.eos_token
@@ -51,7 +50,7 @@ class ESMEmbeddings(nn.Module):
         self.indices = indices
 
         with torch.no_grad():
-            self.word_embeddings.weight = new_word_embeddings.weight
+            self.word_embeddings = new_word_embeddings
         self.word_embeddings.requires_grad_(True)
 
     def forward(self, x, attention_mask = None):
