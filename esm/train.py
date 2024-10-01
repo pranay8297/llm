@@ -8,7 +8,6 @@ epochs = 2
 batch_size = 8
 grad_accum_steps = 10
 
-
 data_obj = get_dls()
 train_dl = data_obj['train_dl']
 valid_dl = data_obj['valid_dl']
@@ -29,9 +28,7 @@ for i in range(epochs):
     for iter, batch in enumerate(train_dl):
 
         outputs = model(batch['input_ids'].to(device), y = batch['labels'].to(device), attention_mask = batch['attention_mask'].to(device))
-
         losses.append(outputs['loss'].item())
-
         outputs['loss'] = outputs['loss']/grad_accum_steps
         outputs['loss'].backward()
         steps_processed_after_gradstep += 1
@@ -41,11 +38,9 @@ for i in range(epochs):
             norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             lr_scheduler.step()
-
             steps_processed_after_gradstep = 0
             print(f"Train Loss: {losses[-1]}")
 
-            
     with torch.no_grad():
         # Do a validation pass for 20 epochs and calculate loss
         vl_loss = None
@@ -57,3 +52,19 @@ for i in range(epochs):
         print(f'Validation Loss: {vl_loss.item()//len(valid_dl)}')
 
 torch.save(model, './model_finetune_v1.pt')
+
+
+# Next: TODO 
+# Load the pretrained weights to this model - Done
+# Add required Activation functions and all... make sure its the same forward as of original esm model's
+# Implement Rotary Embeddings - Done
+# Do a forward pass - verification process - Done
+# Then work on Embeddings - Add new tokens - Keep the existing tokens - Turn on requires grad - Done, Verification - Done
+# Get the training data - Done
+# Test one forward pass, calculate loss, calculate gradiants, update parameters - Done
+# Set up Lora for the model - Done
+# write training script - Grad accumulation, batches, generate - Done
+# Finetune - Hope for the best - Snowflake - Done - Results look promising
+
+# setup topk = 10 (For a target vocab size of 20 + 7 + 1 -> 10 is a good topk) # This is for generate - Not for training - Load the pretrained model and do this 
+# Do benchmarking with prot GPT

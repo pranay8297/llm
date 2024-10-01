@@ -317,19 +317,3 @@ class ESM(nn.Module):
             output['loss'] = actual_loss
 
         return output
-
-
-# Next: TODO 
-# Load the pretrained weights to this model - Done
-# Add required Activation functions and all... make sure its the same forward as of original esm model's
-# Implement Rotary Embeddings - Done
-# Do a forward pass - verification process - Done
-# Then work on Embeddings - Add new tokens - Keep the existing tokens - Turn on requires grad - Done, Verification: Done
-# Get the training data - Done
-# Test one forward pass, calculate loss, calculate gradiants, update parameters - Done
-
-# Set up Lora for the model
-# write training script - Grad accumulation, batches, generate
-# setup topk = 10 (For a target vocab size of 20 + 7 + 1 -> 10 is a good topk) # This is for generate - Not for training
-
-# Finetune - Hope for the best - Snowflake
