@@ -11,6 +11,31 @@ from rotary_utils import *
 from utils import get_tokenizer
 
 @dataclass
+class LoRAConfig:
+    lora_r: int = 8
+    lora_alpha: int = 16
+    lora_dropout: int = 0.05
+    lora_query: bool = True
+    lora_key: bool = False
+    lora_value: bool = True
+    lora_projection: bool = False
+    lora_mlp: bool = False
+    lora_head: bool = False
+
+class LoRALinear(nn.Linear):
+    def __init__(self, nin, nout, lora_config):
+        super().__init__(nin, nout)
+        std_dev = 1 / torch.sqrt(torch.tensor(lora_config.lora_r).float())
+        self.lora_A = torch.nn.Parameter(torch.randn(nin, lora_config.lora_r) * std_dev)
+        self.lora_B = torch.nn.Parameter(torch.zeros(lora_config.lora_r, nout))
+        self.alpha = lora_config.lora_alpha
+    
+    def forward(self, x):
+        lora_x = self.alpha * (x @ self.lora_A @ self.lora_B)
+        x = super().forward(x)
+        return x + lora_x
+
+@dataclass
 class ESMConfig(): 
     block_size: int = 1024
     vocab_size: int = 50257
@@ -22,18 +47,31 @@ class ESMConfig():
     pre_trained_model_name: str = ''
 
 class ESMIntermediateLayer(nn.Module):
-    def __init__(self, nin, nout, dropout = 0.0):
+    def __init__(self, nin, nout, lora_config, dropout = 0.0, ):
         super().__init__()
-        self.dense = nn.Linear(nin, nout)
+        
+        self.dense = nn.Linear(nin, nout) if not lora_config.lora_mlp else LoRALinear(nin, nout, lora_config)
         self.act = nn.GELU(approximate = 'tanh')
 
     def forward(self, x):
         return self.act(self.dense(x))
 
 class ESMOutLayer(nn.Module):
-    def __init__(self, nin, nout, dropout = 0.0):
+    def __init__(self, nin, nout, lora_config, dropout = 0.0, inside_attention = False):
         super().__init__()
-        self.dense = nn.Linear(nin, nout)
+        
+        # 2 places used - 1. inisde the attention block  and inside the MLP
+        # if used inside attention and lora_config.lora_projection is true then dense is a LoRALInear
+        # elif used in mlp and lora_config.lora_mlp is true then dens is a LoRALinear again
+        # else its a Linear
+
+        if inside_attention == True and lora_config.lora_projection:
+            self.dense = LoRALinear(nin, nout, lora_config)
+        elif inside_attention == False and lora_config.lora_mlp: 
+            self.dense = LoRALinear(nin, nout, lora_config)
+        else:
+            self.dense = nn.Linear(nin, nout)
+
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, attn_scores):
@@ -44,17 +82,18 @@ class ESMOutLayer(nn.Module):
 
 class ESMSelfAttn(nn.Module): # Verified
     
-    def __init__(self, config):
+    def __init__(self, config, lora_config):
         super().__init__()
 
         assert config.n_embd % config.n_head == 0
 
-        self.query = nn.Linear(config.n_embd, config.n_embd)
-        self.key = nn.Linear(config.n_embd, config.n_embd)
-        self.value = nn.Linear(config.n_embd, config.n_embd)
-
+        self.query = nn.Linear(config.n_embd, config.n_embd) if not lora_config.lora_query else LoRALinear(config.n_embd, config.n_embd, lora_config)
+        self.key = nn.Linear(config.n_embd, config.n_embd) if not lora_config.lora_key else LoRALinear(config.n_embd, config.n_embd, lora_config)
+        self.value = nn.Linear(config.n_embd, config.n_embd) if not lora_config.lora_value else LoRALinear(config.n_embd, config.n_embd, lora_config)
         self.n_head = config.n_head
+
         attention_head_size = config.n_embd//config.n_head
+
         # Add a rotary embeddings here
         self.rotary_embeddings = RotaryEmbedding(dim = attention_head_size)
      
@@ -71,16 +110,16 @@ class ESMSelfAttn(nn.Module): # Verified
         q, k = self.rotary_embeddings(q, k)
 
         # Attention claculation - # TODO: make is_casual true in case of finetuning - Very important
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask = attention_mask, is_causal = True) # flash attention 
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask = attention_mask, is_causal = False) # flash attention 
         y = rearrange(y, 'b h s e -> b s (h e)', h = self.n_head)
         return y
 
 class ESMAttn(nn.Module): # Verified
 
-    def __init__(self, config):
+    def __init__(self, config, lora_config):
         super().__init__() # No activation function at this level
-        self.self = ESMSelfAttn(config)
-        self.output = ESMOutLayer(config.n_embd, config.n_embd, dropout = getattr(config, 'dropout', 0.))
+        self.self = ESMSelfAttn(config, lora_config)
+        self.output = ESMOutLayer(config.n_embd, config.n_embd, lora_config, dropout = getattr(config, 'dropout', 0.), inside_attention = True)
         self.LayerNorm = nn.LayerNorm(config.n_embd)
     
     def forward(self, x, attention_mask):
@@ -91,28 +130,28 @@ class ESMAttn(nn.Module): # Verified
 
 class ESMLayers(nn.Module): # Both Init and Forward Verified - Done and Dusted
 
-    def __init__(self, config):
+    def __init__(self, config, lora_config):
         super().__init__()
-        self.attention = ESMAttn(config) 
-        self.intermediate = ESMIntermediateLayer(config.n_embd, config.hidden_size) # 
-        self.output = ESMOutLayer(config.hidden_size, config.n_embd) #
+        self.attention = ESMAttn(config, lora_config) 
+        self.intermediate = ESMIntermediateLayer(config.n_embd, config.hidden_size, lora_config) # 
+        self.output = ESMOutLayer(config.hidden_size, config.n_embd, lora_config) #
         self.LayerNorm = nn.LayerNorm(config.n_embd)
     
     def forward(self, x, attention_mask):
         attention_op = self.attention(x, attention_mask)
-        attention_op_ln = self.LayerNorm(attention_op)
+        attention_op_ln = self.LayerNorm(attention_op) # This will keep the activations in check - Lets see
         inter = self.intermediate(attention_op_ln)
         out = self.output(inter, attention_op)
         return out
 
 class ESMEncoder(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, lora_config):
         super().__init__() 
         
         # No activation functions here as well
 
-        self.layer = nn.ModuleList([ESMLayers(config) for _ in range(config.n_layer)])
+        self.layer = nn.ModuleList([ESMLayers(config, lora_config) for _ in range(config.n_layer)])
         self.emb_layer_norm_after = nn.LayerNorm(config.n_embd)
     
     def forward(self, x, attention_mask = None): 
@@ -124,16 +163,21 @@ class ESMEncoder(nn.Module):
 
 class ESM(nn.Module):
     
-    def __init__(self, config):
+    def __init__(self, config, lora_config):
         
         super().__init__()
         self.config = config
         self.esm = nn.ModuleDict(dict(
             embeddings = ESMEmbeddings(config),
-            encoder = ESMEncoder(config), # Done, forward - here
-            final_layer = nn.Linear(config.n_embd, config.vocab_size)
+            encoder = ESMEncoder(config, lora_config), # Done, forward - here
+            final_layer = nn.Linear(config.n_embd, config.vocab_size) if not lora_config.lora_head else 
+                              LoRALinear(config.n_embd, config.vocab_size, lora_config)
         ))
         self.esm.final_layer.weight = self.esm.embeddings.word_embeddings.weight
+        
+        # Final Layer bias initializtion
+        torch.nn.init.zeros_(self.esm.final_layer.bias) # Set the bias to 0
+        # Finally one small thing is to decide weather to add an intermediate layer or not? - Thats a future discussion
     
     @classmethod
     def get_pretrained_config(cls, model_type = 'esm2_t33_650M_UR50D'):
@@ -164,13 +208,13 @@ class ESM(nn.Module):
         return config
 
     @classmethod
-    def from_pretrained(cls, model_type = 'esm2_t33_650M_UR50D', embedding_post_init = True):
+    def from_pretrained(cls, lora_config, model_type = 'esm2_t33_650M_UR50D', embedding_post_init = True):
 
         config = cls.get_pretrained_config(model_type)
         print("loading weights from pretrained gpt: %s" % model_type)
 
         # create a from-scratch initialized minGPT model
-        model = cls(config)
+        model = cls(config, lora_config)
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
@@ -207,13 +251,17 @@ class ESM(nn.Module):
             model.esm.final_layer.bias.zero_()
         
         # Freeze the model
-        for param in model.parameters():
-            param.requires_grad = False
+        for name, param in model.named_parameters():
+            if 'lora_' not in name:
+                param.requires_grad = False
 
         if embedding_post_init: 
             model.esm.embeddings.post_model_init()
             del model.esm.final_layer
+
+            #IMP: Here we are assuming that embeddings will never have LoRA attached to it, hence we are going with Linear
             model.esm.final_layer = nn.Linear(config.n_embd, model.esm.embeddings.word_embeddings.weight.shape[0])
+            
             model.esm.final_layer.weight = model.esm.embeddings.word_embeddings.weight
 
         return model
@@ -232,32 +280,56 @@ class ESM(nn.Module):
         attn_mask = attn_mask.expand(b, 1, s, s)
         return attn_mask
 
-    def forward(self, x, y = None, attention_mask = None, output_encoder = True):
+    def forward(self, x, y = None, attention_mask = None, output_encoder_states = True):
 
         # Calculate Embeddings
         x = self.esm.embeddings(x, attention_mask) # TODO: Verify the new embeddings function without doing post init and after doing post model init - Ideally both should stay the same
 
         # compute attention_mask for attention scores
-        attention_mask = self.get_extended_attn_mask(attention_mask, x.shape)
+        extended_attention_mask = self.get_extended_attn_mask(attention_mask, x.shape)
 
         #Do the forward pass
-        x = self.esm.encoder(x, attention_mask = attention_mask)
-        if not output_encoder:
-            return self.esm.final_layer(x)
-        else:
-            return self.esm.final_layer(x), x
+        x = self.esm.encoder(x, attention_mask = extended_attention_mask)
+        logits = self.esm.final_layer(x)
+        output = {'logits': logits}
 
-tokenizer = get_tokenizer()
-model = ESM.from_pretrained("esm2_t30_150M_UR50D") # load the pretrained frozen model
-print('Models created')
-print(model)
+        if output_encoder_states:
+            output['encoder_output'] = x
+        if y is not None: 
+            # Calculate loss and send it in output
+            outputs = logits.view(-1, logits.size(-1))  # (bs*seq_len, 384)
+            targets = y.view(-1)  # (bs*seq_len)
+            
+            # Flatten the attention mask
+            attention_mask = attention_mask.view(-1)  # (bs*seq_len)
+            
+            # Calculate cross entropy loss
+            loss = F.cross_entropy(outputs, targets, reduction='none')
+            
+            # Apply the mask to the loss
+            masked_loss = loss * attention_mask
+            
+            # Calculate the mean loss over the actual tokens (excluding padding)
+            total_loss = masked_loss.sum()
+            num_tokens = attention_mask.sum()
+            
+            actual_loss = total_loss / num_tokens
+            output['loss'] = actual_loss
+
+        return output
 
 
-# Next: TODO - Load the pretrained weights to this model - Done
-# Add required Activation functions and all... make sure its the same forward as of origina esm model's
+# Next: TODO 
+# Load the pretrained weights to this model - Done
+# Add required Activation functions and all... make sure its the same forward as of original esm model's
 # Implement Rotary Embeddings - Done
-# Do a forward pass - Partially done - verification process - Done
-# Then work on Embeddings - Add new tokens - Keep the existing tokens - Turn on requires grad - Done, Verification: Pending
-# Get the training data
+# Do a forward pass - verification process - Done
+# Then work on Embeddings - Add new tokens - Keep the existing tokens - Turn on requires grad - Done, Verification: Done
+# Get the training data - Done
+# Test one forward pass, calculate loss, calculate gradiants, update parameters - Done
+
 # Set up Lora for the model
+# write training script - Grad accumulation, batches, generate
+# setup topk = 10 (For a target vocab size of 20 + 7 + 1 -> 10 is a good topk) # This is for generate - Not for training
+
 # Finetune - Hope for the best - Snowflake

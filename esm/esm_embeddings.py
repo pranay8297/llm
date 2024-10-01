@@ -24,6 +24,7 @@ class ESMEmbeddings(nn.Module):
         esm_tokenizer = AutoTokenizer.from_pretrained(self.config.pre_trained_model_name, padding='max_length', max_length=1026)
         esm_vocab = esm_tokenizer.get_vocab()
         new_word_embeddings = nn.Embedding(PFGPT_VOCAB_SIZE, self.config.n_embd)
+        torch.nn.init.normal_(new_word_embeddings.weight, std = 0.1263) # This is the std of esm embeddings - As we are using weights of that model, its better to use this std for effective training
 
         # Find all the common keys tokens between esm tokenizer and pf_gpt tokenizer
         pfgpt_keys = set(pfgpt_vocab.keys())
