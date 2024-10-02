@@ -110,7 +110,7 @@ class ESMSelfAttn(nn.Module): # Verified
         q, k = self.rotary_embeddings(q, k)
 
         # Attention claculation - # TODO: make is_casual true in case of finetuning - Very important
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask = attention_mask, is_causal = False) # flash attention 
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask = attention_mask, is_causal = True) # flash attention 
         y = rearrange(y, 'b h s e -> b s (h e)', h = self.n_head)
         return y
 
